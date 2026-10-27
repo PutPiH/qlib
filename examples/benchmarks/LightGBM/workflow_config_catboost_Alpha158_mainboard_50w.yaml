@@ -1,0 +1,85 @@
+# Personal research baseline: historical CSI300 main-board constituents, CNY 500,000.
+qlib_init:
+    provider_uri: "~/.qlib/qlib_data/cn_data"
+    region: cn
+market: &market csi300
+benchmark: &benchmark SH000300
+data_handler_config: &data_handler_config
+    start_time: 2015-01-01
+    end_time: 2026-10-13
+    fit_start_time: 2015-01-01
+    fit_end_time: 2022-12-28
+    instruments: *market
+    filter_pipe:
+        - filter_type: NameDFilter
+          name_rule_re: '^(SH(600|601|603|605)|SZ(000|001|002|003))[0-9]{3}$'
+          filter_start_time: null
+          filter_end_time: null
+        # Raw close = adjusted close / factor; threshold is a research assumption.
+        # shortcut: no historical ST/delisting flags in local data; add them before live trading.
+        - filter_type: ExpressionDFilter
+          rule_expression: '($factor > 0) & ($close / $factor > 0) & ($close / $factor <= 100) & ($volume > 0)'
+          filter_start_time: null
+          filter_end_time: null
+          keep: false
+port_analysis_config: &port_analysis_config
+    strategy:
+        class: TopkDropoutStrategy
+        module_path: qlib.contrib.strategy
+        kwargs:
+            signal: <PRED>
+            topk: 20
+            n_drop: 1
+            risk_degree: 0.95
+    backtest:
+        start_time: 2026-01-01
+        end_time: 2026-10-09
+        account: 500000
+        benchmark: *benchmark
+        exchange_kwargs:
+            limit_threshold: 0.095
+            deal_price: close
+            open_cost: 0.0005
+            close_cost: 0.0015
+            min_cost: 5
+task:
+    model:
+        class: CatBoostModel
+        module_path: qlib.contrib.model.catboost_model
+        kwargs:
+            loss: RMSE
+            learning_rate: 0.0421
+            subsample: 0.8789
+            max_depth: 6
+            num_leaves: 100
+            thread_count: 20
+            grow_policy: Lossguide
+            # Bernoulli supports CPU and GPU; Poisson requires GPU.
+            bootstrap_type: Bernoulli
+    dataset:
+        class: DatasetH
+        module_path: qlib.data.dataset
+        kwargs:
+            handler:
+                class: Alpha158
+                module_path: qlib.contrib.data.handler
+                kwargs: *data_handler_config
+            segments:
+                train: [2015-01-01, 2022-12-28]
+                valid: [2023-01-01, 2025-12-30]
+                test: [2026-01-01, 2026-10-09]
+    record: 
+        - class: SignalRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            model: <MODEL>
+            dataset: <DATASET>
+        - class: SigAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            ana_long_short: False
+            ann_scaler: 252
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            config: *port_analysis_config
